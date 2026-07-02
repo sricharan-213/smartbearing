@@ -1,152 +1,91 @@
-# SmartBearing
+# ⚙️ SmartBearing
+> **Zero Unplanned Downtime. Artificial Intelligence at the Edge.**
 
-**Dual-modal edge intelligence system for predictive bearing failure monitoring in textile MSME factories.**
+SmartBearing is an ultra-low-cost, IoT-powered predictive maintenance system designed specifically for textile MSME factories (like power looms and ring frame machines). By utilizing an ESP32-S3 microcontroller coupled with an array of vibration, acoustic, and temperature sensors, SmartBearing listens to the mathematical heartbeat of your machines and predicts bearing failures *weeks* before they happen.
 
-SmartBearing is a corporate-grade IoT dashboard that monitors spindle bearing health in power loom factories. It collects vibration + acoustic signals from edge sensor nodes, runs anomaly detection on-device, and sends WhatsApp alerts before failure occurs.
-
----
-
-## Features
-
-- **9-page full dashboard** — Landing, Login, Register, Fleet Overview, Machine Detail, Predictions, Alert Center, Analytics & ROI, Settings
-- **Live sensor feed** — simulated real-time vibration & temperature updates every 3.5 s
-- **FFT analysis** — BPFO/BPFI frequency spike visualization per machine
-- **Remaining Useful Life (RUL)** prediction curves
-- **ROI calculator** — interactive sliders, estimates monthly cost savings
-- **PDF report export** — full fleet analytics report opens print dialog
-- **CSV export** — download alert log as `.csv`
-- **Command palette** — press `Cmd+K` / `Ctrl+K` to search machines and navigate
-- **WhatsApp alert simulation** — realistic notification slides in from bottom-right
-- **Alert acknowledge flow** — Acknowledge → Resolve with toast feedback
-- **Dark navy theme** — Space Grotesk + Inter + JetBrains Mono type system
+No ₹3,00,000 corporate setups. No IT teams. Just a ₹1,800 magnetic box and a WhatsApp alert.
 
 ---
 
-## Prerequisites
+## 🛑 The Problem: The ₹12,000 Breakdown
 
-| Tool | Version |
-|------|---------|
-| Node.js | 18 or higher (20+ recommended) |
-| pnpm | 9 or higher |
+Inside a textile ring frame machine, metal bearings spin at up to 15,000 RPM. Over time, microscopic cracks form. These cracks create tiny vibrations and high-pitched acoustic anomalies entirely undetectable to human senses. 
 
-Install pnpm if you don't have it:
+When the bearing finally shatters:
+1. Production **stops immediately**.
+2. Diagnostics and repairs take **4 to 6 hours**.
+3. The factory owner loses **₹12,000+** in a single shift.
 
+And this happens repeatedly, unpredictably, across thousands of factories.
+
+## 💡 The Solution: SmartBearing
+
+SmartBearing is a matchbox-sized IoT device that attaches to the machine magnetically (zero drilling required). It runs continuous Machine Learning models directly on the raw sensor data, detecting the exact mathematical frequency spike (BPFO - Ball Pass Frequency Outer race) that indicates a microscopic crack.
+
+### 🧩 The Hardware Stack
+- **Vibration (MPU-6050):** Detects microscopic physical shaking.
+- **Microphone (INMP441):** Captures high-frequency acoustic friction.
+- **Temperature (DS18B20):** Monitors thermal anomalies.
+- **Voltage (ZMPT101B):** Automatically compensates for Indian factory voltage fluctuations to prevent false positives! (If the voltage drops, the machine shakes differently—our system mathematically removes this noise).
+
+### 🧠 The ML & Software Architecture
+1. **Sense:** ESP32-S3 reads thousands of data points per second.
+2. **Clean:** Voltage fluctuations are filtered out of the vibration data.
+3. **Analyze:** A Python microservice extracts 37 distinct mathematical features (Time Domain, FFT, PyWavelets).
+4. **Predict:** An XGBoost / Isolation Forest model (trained on the CWRU Bearing Dataset) scores the machine's health.
+5. **Alert:** If the score drops, a webhook hits the Twilio API, instantly sending a **WhatsApp alert** to the factory owner estimating the Time-to-Failure (e.g., 6–18 hours).
+
+The owner schedules a 15-minute replacement during the lunch break. Zero unplanned downtime.
+
+---
+
+## 🚀 Running the Project Locally
+
+This repository contains the full end-to-end software stack (Frontend Dashboard + Node.js API + Python ML Server).
+
+### Prerequisites
+- **Node.js** (v18+) & **pnpm** (v9+)
+- **Python** (v3.9+)
+
+### 1. Start the Machine Learning Server
+We use a FastAPI Python server to host the trained ML model.
 ```bash
-npm install -g pnpm
+# Windows
+.\start-ml.bat
 ```
+*(This automatically installs dependencies via `requirements.txt` and starts the server on port 8000).*
 
----
-
-## Getting Started
-
-### 1. Clone the project
-
-```bash
-git clone https://github.com/Vaishnav-Hub9/smartbearing.git
-cd smartbearing
-```
-
-### 2. Install dependencies
-
+### 2. Start the Backend API & Simulator
 ```bash
 pnpm install
-```
-
-> This installs all workspace packages in one shot (root + frontend + API server).
-
-### 3. Run the frontend
-
-```bash
-pnpm --filter @workspace/smartbearing run dev
-```
-
-Open **http://localhost:5173** in your browser.
-
-### 4. (Optional) Run the API server
-
-The frontend is fully self-contained with mock data — no API calls are made. The API server is scaffolded for future backend integration.
-
-```bash
+set SIMULATOR_AUTO_START=true
 pnpm --filter @workspace/api-server run dev
 ```
 
-API server starts on **http://localhost:5000**.
-
----
-
-## Login
-
-The app uses a local demo login. On the Login page, enter **any email + any password** and press Sign In — it sets a `localStorage` flag and redirects to the dashboard.
-
----
-
-## Project Structure
-
+### 3. Start the Dashboard
+```bash
+pnpm --filter @workspace/smartbearing run dev
 ```
-smartbearing/
-├── artifacts/
-│   ├── smartbearing/          # React + Vite frontend
-│   │   ├── src/
-│   │   │   ├── pages/         # All 9 pages
-│   │   │   ├── components/    # Layout, UI, dashboard widgets
-│   │   │   ├── data/          # mockData.ts — all sensor/machine data
-│   │   │   ├── hooks/         # useCountUp, useLiveSensors
-│   │   │   └── utils/         # printReport.ts (PDF + CSV export)
-│   │   ├── index.html
-│   │   └── vite.config.ts
-│   └── api-server/            # Express 5 API server (scaffolded)
-├── lib/                       # Shared TypeScript libraries
-├── package.json               # Root workspace config
-├── pnpm-workspace.yaml        # Workspace + catalog pins
-└── tsconfig.base.json         # Shared TypeScript config
-```
+Open **http://localhost:5173** in your browser. Enter *any* email and password to log in.
 
 ---
 
-## Available Scripts
+## 🎨 Dashboard Features
 
-| Command | Description |
-|---------|-------------|
-| `pnpm --filter @workspace/smartbearing run dev` | Start frontend dev server |
-| `pnpm --filter @workspace/api-server run dev` | Start API server |
-| `pnpm run typecheck` | Full TypeScript check across all packages |
-| `pnpm run build` | Build all packages |
-
----
-
-## Tech Stack
-
-| Layer | Technology |
-|-------|-----------|
-| Frontend framework | React 18 + Vite |
-| Routing | wouter |
-| Charts | Recharts |
-| 3D / CSS bearing | @react-three/fiber + CSS fallback |
-| Animation | Framer Motion |
-| UI components | shadcn/ui + Radix UI |
-| Icons | Lucide React |
-| Styling | Tailwind CSS v4 |
-| Command palette | cmdk |
-| Package manager | pnpm workspaces |
+- **Live Sensor Feed:** Watch real-time vibration, acoustic, and temperature data stream into the dashboard via WebSockets.
+- **Machine Learning Integration:** Watch the ML model dynamically predict "Inner Race Fault" or "Ball Fault" based on live synthesized harmonic signals.
+- **FFT Visualization:** View the actual frequency spikes (BPFO) that the AI detects.
+- **ROI Calculator:** An interactive tool for factory owners to calculate exactly how much money SmartBearing saves them every month.
+- **PDF & CSV Export:** One-click fleet reports for management.
 
 ---
 
-## Notes
-
-- All sensor data is **mock/simulated** — no real hardware required.
-- Authentication is **localStorage-based** — demo only, not production-safe.
-- The 3D bearing component auto-detects WebGL availability and falls back to a CSS animation if WebGL is unavailable.
-- PDF export uses the browser's built-in print dialog — choose "Save as PDF" when the dialog appears.
+## 👥 The Team
+- **Physical Hardware:** Varun & Sreeram
+- **AI / ML Model & CAD:** Prateek
+- **Backend API & Alerts:** Sreeram
+- **Frontend Dashboard:** Vaishnav
+- **Git & Repo Management:** Charan
 
 ---
-
-## Screenshots
-
-| Page | Description |
-|------|-------------|
-| Landing | Hero with animated CSS bearing + FFT overlay |
-| Dashboard | Fleet KPIs, live sensor feed, vibration trend chart |
-| Machine Detail | Per-machine FFT, waveform, RUL curve |
-| Predictions | RUL projections for all at-risk machines |
-| Alert Center | Acknowledge/resolve flow, CSV export |
-| Analytics | 30-day trends, heatmap, ROI calculator, PDF export |
+*Built to bring enterprise-grade AI to the local factory floor.*
