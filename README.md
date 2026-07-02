@@ -1,6 +1,9 @@
 <div align="center">
   <h1>⚙️ SmartBearing</h1>
   <p><b>Zero Unplanned Downtime. Artificial Intelligence at the Edge.</b></p>
+  <br/>
+  <video src="https://raw.githubusercontent.com/sricharan-213/smartbearing/main/onshapevid.mp4" autoplay loop muted playsinline width="80%"></video>
+  <br/>
 </div>
 
 SmartBearing is an ultra-low-cost, IoT-powered predictive maintenance system designed specifically for textile MSME factories (like power looms and ring frame machines). By utilizing an ESP32-S3 microcontroller coupled with an array of vibration, acoustic, and temperature sensors, SmartBearing listens to the mathematical heartbeat of your machines and predicts bearing failures *weeks* before they happen.
