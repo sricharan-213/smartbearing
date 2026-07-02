@@ -163,7 +163,7 @@ Open **http://localhost:5173** in your browser. Enter *any* email and password t
 
 ## 🛠️ Hardware Prototype
 
-<video src="./onshapevid.mp4" controls="controls" autoplay loop muted width="100%"></video>
+▶️ **[Click here to watch the 3D CAD Prototype Video in action!](https://github.com/sricharan-213/smartbearing/raw/main/onshapevid.mp4)**
 
 ---
 
