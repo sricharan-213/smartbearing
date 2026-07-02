@@ -163,11 +163,10 @@ Open **http://localhost:5173** in your browser. Enter *any* email and password t
 ## 👥 The Team
 | Name | Role | Responsibilities |
 |------|------|------------------|
-| **Varun & Sreeram** | Hardware Engineering | Physical device assembly, sensors, ESP32 wiring |
 | **Prateek** | AI & ML Architecture | Training XGBoost/Isolation Forest models, feature extraction, CAD (OnShape) enclosure design |
-| **Sreeram** | Backend API | Node.js Server, WebSocket streaming, Twilio WhatsApp Integration |
+| **Varun Sreeram** | Backend API | Node.js Server, WebSocket streaming, Twilio WhatsApp Integration |
 | **Vaishnav** | Frontend & UI/UX | React Dashboard, 3D visualizations, Recharts data plotting |
-| **Charan** | Operations & DevOps | GitHub repository management, code integrations |
+| **Sri Charan** | Operations & DevOps | GitHub repository management, code integrations |
 
 ---
 <div align="center">
