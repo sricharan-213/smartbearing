@@ -1,47 +1,95 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useParams, Link } from 'wouter';
 import DashLayout from '@/components/layout/DashLayout';
-import { machines, sensorNodes, alerts, timeSeriesData, generateFFTData, generateWaveform } from '@/data/mockData';
 import { StatusBadge } from '@/components/ui/StatusBadge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, Radar, BarChart, Bar, LineChart, Line, ReferenceLine, Cell } from 'recharts';
 import { ChevronRight, Cpu, Activity, Zap, Thermometer, Radio } from 'lucide-react';
+import { machinesApi, alertsApi } from '@/lib/api';
+import { useLiveSensors } from '@/hooks/useLiveSensors';
 
 export default function MachineDetail() {
   const params = useParams();
   const machineId = params.id || 'M003';
-  const machine = machines.find(m => m.id === machineId) || machines[2];
-  const nodes = sensorNodes.filter(n => n.machineId === machineId);
-  const mAlerts = alerts.filter(a => a.machineId === machineId);
   
-  const fftData = generateFFTData(machineId);
-  const waveformData = generateWaveform(machineId);
+  const [machine, setMachine] = useState<any>(null);
+  const [mAlerts, setMAlerts] = useState<any[]>([]);
+  const [fftData, setFftData] = useState<any[]>([]);
+  const [waveformData, setWaveformData] = useState<any[]>([]);
+  
+  const liveSensors = useLiveSensors(machineId);
 
-  // Live random fluctuating data for Tab 2
-  const [liveData, setLiveData] = useState(nodes[0]);
   useEffect(() => {
-    const timer = setInterval(() => {
-      setLiveData(prev => ({
-        ...prev,
-        vibrationRMS: prev.vibrationRMS * (1 + (Math.random() - 0.5) * 0.05),
-        temperature: prev.temperature + (Math.random() - 0.5) * 0.5,
-      }));
-    }, 2000);
-    return () => clearInterval(timer);
+    let isMounted = true;
+    const fetchData = async () => {
+      try {
+        const [machineRes, alertsRes, fftRes] = await Promise.all([
+          machinesApi.getById(machineId),
+          alertsApi.getAll({ machineId }),
+          machinesApi.getFFT(machineId)
+        ]);
+        
+        if (!isMounted) return;
+        
+        setMachine(machineRes.data.data);
+        setMAlerts(alertsRes.data.data);
+        setFftData(fftRes.data.data || []);
+        
+        const wf = Array.from({ length: 100 }, (_, i) => {
+          let value = Math.sin(i * 0.3) * 0.3;
+          if (machineRes.data.data.status === 'critical') {
+            value = Math.sin(i * 0.3) * 1.5 + (Math.random() > 0.85 ? (Math.random() - 0.5) * 4 : 0);
+          }
+          return { t: i, value };
+        });
+        setWaveformData(wf);
+      } catch (err) {
+        console.error(err);
+      }
+    };
+    
+    fetchData();
+    
+    const interval = setInterval(async () => {
+      try {
+        const fftRes = await machinesApi.getFFT(machineId);
+        if (isMounted && fftRes.data.data) {
+           setFftData(fftRes.data.data);
+        }
+      } catch (e) {}
+    }, 4000);
+    
+    return () => {
+      isMounted = false;
+      clearInterval(interval);
+    };
   }, [machineId]);
 
-  const radarData = [
-    { subject: 'Vibration', A: liveData?.anomalyScore > 0.5 ? 90 : 30, fullMark: 100 },
-    { subject: 'Acoustics', A: liveData?.acousticLevel > 1.0 ? 85 : 40, fullMark: 100 },
-    { subject: 'Temperature', A: liveData?.temperature > 60 ? 80 : 50, fullMark: 100 },
-    { subject: 'Voltage', A: Math.abs(liveData?.voltage - 220) > 10 ? 70 : 20, fullMark: 100 },
-    { subject: 'Anomaly', A: liveData?.anomalyScore * 100, fullMark: 100 },
-  ];
+  const liveData = useMemo(() => {
+     if (!liveSensors || liveSensors.length === 0) return null;
+     const critical = liveSensors.find(s => s.status === 'critical');
+     if (critical) return critical;
+     const warning = liveSensors.find(s => s.status === 'warning');
+     if (warning) return warning;
+     return liveSensors[0];
+  }, [liveSensors]);
+
+  const radarData = useMemo(() => {
+    if (!liveData) return [];
+    return [
+      { subject: 'Vibration', A: liveData.anomalyScore > 0.5 ? 90 : 30, fullMark: 100 },
+      { subject: 'Acoustics', A: liveData.acousticLevel > 1.0 ? 85 : 40, fullMark: 100 },
+      { subject: 'Temperature', A: liveData.temperature > 60 ? 80 : 50, fullMark: 100 },
+      { subject: 'Voltage', A: 20, fullMark: 100 },
+      { subject: 'Anomaly', A: liveData.anomalyScore * 100, fullMark: 100 },
+    ];
+  }, [liveData]);
+
+  if (!machine) return <DashLayout><div className="text-white p-6">Loading machine data...</div></DashLayout>;
 
   return (
     <DashLayout>
       <div className="space-y-6">
-        {/* Breadcrumb & Header */}
         <div className="flex items-center text-sm text-slate-400 mb-2">
           <Link href="/dashboard" className="hover:text-amber">Dashboard</Link>
           <ChevronRight className="w-4 h-4 mx-1" />
@@ -54,7 +102,7 @@ export default function MachineDetail() {
               <h1 className="font-display text-3xl font-bold text-white">{machine.name}</h1>
               <StatusBadge status={machine.status} />
             </div>
-            <p className="text-slate-400 font-mono-data text-sm">{machine.id} | Unit {machine.factoryId} | {machine.spindles} Spindles</p>
+            <p className="text-slate-400 font-mono-data text-sm">{machine.id} | Unit {machine.section || 'Main'} | {machine.totalSpindles} Spindles</p>
           </div>
           <div className="flex gap-6 text-right">
             <div>
@@ -63,7 +111,7 @@ export default function MachineDetail() {
             </div>
             <div>
               <div className="text-xs text-slate-500 uppercase tracking-wider mb-1">Nodes Active</div>
-              <div className="text-3xl font-mono-data font-bold text-white">{machine.activeSensors}</div>
+              <div className="text-3xl font-mono-data font-bold text-white">{machine.activeSensors || 5}</div>
             </div>
           </div>
         </div>
@@ -76,11 +124,10 @@ export default function MachineDetail() {
             <TabsTrigger value="history" className="data-[state=active]:bg-navy data-[state=active]:text-amber">History</TabsTrigger>
           </TabsList>
 
-          {/* TAB 1: OVERVIEW */}
           <TabsContent value="overview" className="grid grid-cols-1 lg:grid-cols-3 gap-6">
             <div className="space-y-4">
               <h3 className="font-semibold text-white mb-4">Sensor Nodes</h3>
-              {nodes.map(node => (
+              {liveSensors.map(node => (
                 <div key={node.id} className="bg-navy-card border border-navy p-4 rounded-xl flex items-center justify-between">
                   <div className="flex items-center gap-4">
                     <div className="relative w-12 h-12 flex items-center justify-center">
@@ -116,14 +163,13 @@ export default function MachineDetail() {
             </div>
           </TabsContent>
 
-          {/* TAB 2: LIVE SENSORS */}
           <TabsContent value="sensors" className="space-y-6">
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
               {[
-                { label: 'Vibration RMS', val: liveData?.vibrationRMS.toFixed(3), unit: 'mm/s', icon: Activity, color: '#F59E0B' },
-                { label: 'Temperature', val: liveData?.temperature.toFixed(1), unit: '°C', icon: Thermometer, color: '#EA580C' },
-                { label: 'Acoustic Emission', val: liveData?.acousticLevel.toFixed(2), unit: 'dB', icon: Radio, color: '#3B82F6' },
-                { label: 'Supply Voltage', val: liveData?.voltage.toFixed(0), unit: 'V', icon: Zap, color: '#10B981' }
+                { label: 'Vibration RMS', val: liveData?.vibrationRMS?.toFixed(3) || '0.000', unit: 'mm/s', icon: Activity, color: '#F59E0B' },
+                { label: 'Temperature', val: liveData?.temperature?.toFixed(1) || '0.0', unit: '°C', icon: Thermometer, color: '#EA580C' },
+                { label: 'Acoustic Emission', val: liveData?.acousticLevel?.toFixed(2) || '0.00', unit: 'dB', icon: Radio, color: '#3B82F6' },
+                { label: 'Supply Voltage', val: '220', unit: 'V', icon: Zap, color: '#10B981' }
               ].map((m, i) => (
                 <div key={i} className="bg-navy-card border border-navy p-5 rounded-xl relative overflow-hidden">
                   <div className="flex justify-between items-start mb-4">
@@ -132,14 +178,6 @@ export default function MachineDetail() {
                   </div>
                   <div className="font-mono-data text-4xl font-bold text-white">
                     {m.val} <span className="text-sm text-slate-500">{m.unit}</span>
-                  </div>
-                  {/* Fake sparkline background */}
-                  <div className="absolute bottom-0 left-0 w-full h-12 opacity-20 pointer-events-none">
-                    <ResponsiveContainer width="100%" height="100%">
-                      <LineChart data={timeSeriesData[machineId as keyof typeof timeSeriesData]?.vibration || timeSeriesData.M001.vibration}>
-                        <Line type="monotone" dataKey="value" stroke={m.color} strokeWidth={2} dot={false} isAnimationActive={false} />
-                      </LineChart>
-                    </ResponsiveContainer>
                   </div>
                 </div>
               ))}
@@ -151,21 +189,20 @@ export default function MachineDetail() {
                 <div className="absolute top-0 left-0 w-full h-[200%] rounded-full border-[24px] border-[#1E2D4A]"></div>
                 <div className="absolute top-0 left-0 w-full h-[200%] rounded-full border-[24px]" 
                      style={{ 
-                       borderColor: liveData?.anomalyScore > 0.6 ? '#EA580C' : liveData?.anomalyScore > 0.3 ? '#F59E0B' : '#10B981',
+                       borderColor: (liveData?.anomalyScore || 0) > 0.6 ? '#EA580C' : (liveData?.anomalyScore || 0) > 0.3 ? '#F59E0B' : '#10B981',
                        clipPath: `polygon(0 50%, 100% 50%, 100% 100%, 0 100%)`,
-                       transform: `rotate(${180 + (liveData?.anomalyScore || 0) * 180}deg)`,
+                       transform: `rotate(${180 + ((liveData?.anomalyScore || 0) * 180)}deg)`,
                        transformOrigin: 'center',
                        transition: 'transform 1s ease-out'
                      }}></div>
                 <div className="absolute bottom-0 left-1/2 -translate-x-1/2 text-5xl font-mono-data font-bold text-white">
-                  {liveData?.anomalyScore.toFixed(2)}
+                  {(liveData?.anomalyScore || 0).toFixed(2)}
                 </div>
               </div>
               <p className="mt-4 text-slate-400">Score &gt; 0.65 indicates imminent bearing failure</p>
             </div>
           </TabsContent>
 
-          {/* TAB 3: VIBRATION */}
           <TabsContent value="vibration" className="space-y-6">
             <div className="grid lg:grid-cols-3 gap-6">
               <div className="lg:col-span-2 bg-navy-card border border-navy p-5 rounded-xl h-80">
@@ -185,22 +222,22 @@ export default function MachineDetail() {
                         ))
                       }
                     </Bar>
-                    {machineId === 'M003' && <ReferenceLine x={200} stroke="#EA580C" strokeDasharray="3 3" label={{ position: 'top', value: 'BPFO Spike', fill: '#EA580C', fontSize: 12, fontWeight: 'bold' }} />}
+                    {machine.status === 'critical' && <ReferenceLine x={157} stroke="#EA580C" strokeDasharray="3 3" label={{ position: 'top', value: 'BPFO Spike', fill: '#EA580C', fontSize: 12, fontWeight: 'bold' }} />}
                   </BarChart>
                 </ResponsiveContainer>
               </div>
 
               <div className="bg-navy-card border border-navy p-5 rounded-xl">
                 <h3 className="font-semibold text-white mb-4">Diagnostics</h3>
-                {machineId === 'M003' ? (
+                {machine.status === 'critical' ? (
                   <div className="space-y-4">
                     <div className="bg-[#EA580C]/10 border border-[#EA580C]/30 p-4 rounded-lg">
                       <div className="font-bold text-[#EA580C] mb-1">Outer Race Defect (BPFO)</div>
-                      <p className="text-sm text-slate-300">High amplitude peaks detected at ball pass frequency outer race harmonics (~180Hz). Indicates severe spalling on the outer ring.</p>
+                      <p className="text-sm text-slate-300">High amplitude peaks detected at ball pass frequency outer race harmonics (~157Hz). Indicates severe spalling on the outer ring.</p>
                     </div>
                     <ul className="text-sm text-slate-400 space-y-2 list-disc pl-4">
                       <li>Recommended action: Schedule replacement within 18 hours.</li>
-                      <li>Secondary indicator: Elevated temperature (74°C).</li>
+                      <li>Secondary indicator: Elevated temperature.</li>
                     </ul>
                   </div>
                 ) : (
@@ -218,13 +255,12 @@ export default function MachineDetail() {
                 <LineChart data={waveformData}>
                   <XAxis dataKey="t" stroke="#64748B" tick={false} axisLine={false} />
                   <YAxis stroke="#64748B" tick={false} axisLine={false} domain={[-2, 2]} />
-                  <Line type="monotone" dataKey="value" stroke={machineId==='M003' ? '#EA580C' : '#10B981'} strokeWidth={1} dot={false} isAnimationActive={false} />
+                  <Line type="monotone" dataKey="value" stroke={machine.status === 'critical' ? '#EA580C' : '#10B981'} strokeWidth={1} dot={false} isAnimationActive={false} />
                 </LineChart>
               </ResponsiveContainer>
             </div>
           </TabsContent>
 
-          {/* TAB 4: HISTORY */}
           <TabsContent value="history">
             <div className="bg-navy-card border border-navy rounded-xl overflow-hidden">
               <div className="p-5 border-b border-navy">
@@ -264,10 +300,9 @@ export default function MachineDetail() {
   );
 }
 
-// Inline CheckCircle component for diagnostics empty state
 function CheckCircle(props: any) {
   return (
-    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinelinejoin="round" {...props}>
+    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...props}>
       <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path>
       <polyline points="22 4 12 14.01 9 11.01"></polyline>
     </svg>

@@ -1,21 +1,14 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import DashLayout from '@/components/layout/DashLayout';
-import { alerts as initialAlerts } from '@/data/mockData';
 import { StatusBadge } from '@/components/ui/StatusBadge';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Button } from '@/components/ui/button';
 import { Link } from 'wouter';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts';
-import { exportAlertsCSV } from '@/utils/printReport';
 import { Download, CheckCircle2, Bell, Clock } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
-
-const timelineData = Array.from({ length: 30 }, (_, i) => ({
-  day: i + 1,
-  critical: Math.random() > 0.8 ? Math.floor(Math.random() * 3) : 0,
-  warning: Math.floor(Math.random() * 5),
-  info: Math.floor(Math.random() * 8),
-}));
+import { alertsApi, analyticsApi } from '@/lib/api';
+import { getSocket } from '@/lib/socket';
 
 type AlertStatus = 'active' | 'acknowledged' | 'resolved';
 
@@ -34,29 +27,84 @@ type Alert = {
 
 export default function Alerts() {
   const [filter, setFilter] = useState('All');
-  const [alertList, setAlertList] = useState<Alert[]>(initialAlerts as Alert[]);
+  const [alertList, setAlertList] = useState<Alert[]>([]);
   const [toastMsg, setToastMsg] = useState<string | null>(null);
+  const [timelineData, setTimelineData] = useState<any[]>([]);
+
+  useEffect(() => {
+    let isMounted = true;
+    const fetchData = async () => {
+      try {
+        const [alertsRes, trendsRes] = await Promise.all([
+          alertsApi.getAll(),
+          analyticsApi.getTrends()
+        ]);
+        if (!isMounted) return;
+        setAlertList(alertsRes.data.data);
+        
+        const timeline = Array.from({ length: 30 }, (_, i) => ({
+          day: i + 1,
+          critical: Math.random() > 0.8 ? Math.floor(Math.random() * 3) : 0,
+          warning: Math.floor(Math.random() * 5),
+          info: Math.floor(Math.random() * 8),
+        }));
+        setTimelineData(timeline);
+      } catch (err) {
+        console.error(err);
+      }
+    };
+    fetchData();
+    
+    const socket = getSocket();
+    const handleNewAlert = (alert: Alert) => {
+       setAlertList(prev => [alert, ...prev]);
+       if (alert.type === 'CRITICAL') {
+           showToast(`CRITICAL: ${alert.machineName || alert.machineId} - ${alert.message}`);
+       }
+    };
+    
+    socket.on('alert:new', handleNewAlert);
+    
+    return () => {
+       isMounted = false;
+       socket.off('alert:new', handleNewAlert);
+    };
+  }, []);
 
   function showToast(msg: string) {
     setToastMsg(msg);
     setTimeout(() => setToastMsg(null), 3000);
   }
 
-  function acknowledge(id: string, machineName: string) {
-    setAlertList(prev => prev.map(a => a.id === id ? { ...a, status: 'acknowledged' } : a));
-    showToast(`✓ Alert acknowledged — ${machineName}`);
+  async function acknowledge(id: string, machineName: string) {
+    try {
+      await alertsApi.acknowledge(id);
+      setAlertList(prev => prev.map(a => a.id === id ? { ...a, status: 'acknowledged' } : a));
+      showToast(`✓ Alert acknowledged — ${machineName}`);
+    } catch (err) {
+      console.error(err);
+    }
   }
 
-  function resolve(id: string, machineName: string) {
-    setAlertList(prev => prev.map(a => a.id === id ? { ...a, status: 'resolved' } : a));
-    showToast(`✓ Alert resolved — ${machineName}`);
+  async function resolve(id: string, machineName: string) {
+    try {
+      await alertsApi.resolve(id);
+      setAlertList(prev => prev.map(a => a.id === id ? { ...a, status: 'resolved' } : a));
+      showToast(`✓ Alert resolved — ${machineName}`);
+    } catch (err) {
+      console.error(err);
+    }
+  }
+  
+  function exportAlertsCSV() {
+    window.location.href = `${import.meta.env.VITE_API_URL || 'http://localhost:5000'}/api/alerts/export/csv`;
   }
 
   const activeCount = alertList.filter(a => a.status === 'active').length;
   const criticalCount = alertList.filter(a => a.type === 'CRITICAL' && a.status === 'active').length;
   const warnCount = alertList.filter(a => a.type === 'WARNING' && a.status === 'active').length;
   const resolvedCount = alertList.filter(a => a.status === 'resolved').length;
-  const resolvedRate = Math.round((resolvedCount / alertList.length) * 100);
+  const resolvedRate = alertList.length > 0 ? Math.round((resolvedCount / alertList.length) * 100) : 0;
 
   const filteredAlerts = alertList.filter(a => {
     if (filter === 'All') return true;
@@ -68,7 +116,6 @@ export default function Alerts() {
   return (
     <DashLayout>
       <div className="space-y-6">
-        {/* Header */}
         <div className="flex items-center justify-between">
           <h1 className="font-display text-2xl font-bold text-white tracking-wide">Alert Center</h1>
           <button
@@ -80,7 +127,6 @@ export default function Alerts() {
           </button>
         </div>
 
-        {/* Stats Bar */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
           {[
             { label: 'Total Alerts', val: alertList.length, icon: Bell },
@@ -95,7 +141,6 @@ export default function Alerts() {
           ))}
         </div>
 
-        {/* Timeline Chart */}
         <div className="bg-navy-card border border-navy p-5 rounded-xl h-48">
           <h3 className="text-sm font-medium text-slate-300 mb-4">Alert Frequency (Last 30 Days)</h3>
           <ResponsiveContainer width="100%" height="100%">
@@ -110,7 +155,6 @@ export default function Alerts() {
           </ResponsiveContainer>
         </div>
 
-        {/* Filter & List */}
         <div className="bg-navy-card border border-navy rounded-xl p-6">
           <div className="flex justify-between items-center mb-6 flex-wrap gap-3">
             <Tabs defaultValue="All" onValueChange={setFilter}>
@@ -152,7 +196,7 @@ export default function Alerts() {
                     <div className="flex-1 pl-2">
                       <div className="flex items-center gap-3 mb-2 flex-wrap">
                         <StatusBadge status={isResolved ? 'RESOLVED' : isAcknowledged ? 'ACKNOWLEDGED' : alert.type} />
-                        <span className="font-bold text-white">{alert.machineName}</span>
+                        <span className="font-bold text-white">{alert.machineName || alert.machineId}</span>
                         <span className="text-xs font-mono-data text-slate-500">{alert.timestamp}</span>
                       </div>
                       <p className="text-slate-300 text-sm leading-relaxed">{alert.message}</p>
@@ -169,7 +213,7 @@ export default function Alerts() {
                           <Button
                             variant="outline"
                             size="sm"
-                            onClick={() => acknowledge(alert.id, alert.machineName)}
+                            onClick={() => acknowledge(alert.id, alert.machineName || alert.machineId)}
                             className="border-navy bg-[#0A0E1A] hover:bg-[#141E35] text-slate-300"
                           >
                             Acknowledge
@@ -179,7 +223,7 @@ export default function Alerts() {
                           <Button
                             variant="outline"
                             size="sm"
-                            onClick={() => resolve(alert.id, alert.machineName)}
+                            onClick={() => resolve(alert.id, alert.machineName || alert.machineId)}
                             className="border-[#10B981]/30 bg-[#0D2B1F]/50 hover:bg-[#0D2B1F] text-[#10B981]"
                           >
                             <CheckCircle2 className="w-3 h-3 mr-1" /> Resolve
@@ -213,7 +257,6 @@ export default function Alerts() {
         </div>
       </div>
 
-      {/* Toast notification */}
       <AnimatePresence>
         {toastMsg && (
           <motion.div

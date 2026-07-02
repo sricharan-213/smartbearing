@@ -1,33 +1,66 @@
+import { useState, useEffect } from 'react';
 import DashLayout from '@/components/layout/DashLayout';
-import { stats, machines } from '@/data/mockData';
 import { AreaChart, Area, BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Legend } from 'recharts';
-import { useState } from 'react';
-import { generatePDFReport } from '@/utils/printReport';
 import { FileDown, TrendingUp } from 'lucide-react';
 import { motion } from 'framer-motion';
-
-const heatmapData = Array.from({length: 28}, (_, i) => ({
-  day: i,
-  intensity: Math.random() > 0.8 ? Math.floor(Math.random() * 4) + 1 : 0
-}));
-
-const fleetChartData = Array.from({length: 30}, (_, i) => ({
-  day: `D${i+1}`,
-  'Ring Frame #1': +(95 - (Math.random() * 5)).toFixed(1),
-  'Ring Frame #3': +(Math.max(20, 85 - (i * 1.5) + (Math.random() * 5))).toFixed(1),
-  'Ring Frame #4': +(90 + (Math.random() * 5)).toFixed(1),
-}));
-
-const alertBarData = Array.from({length: 12}, (_, i) => ({
-  month: ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][i],
-  Critical: Math.floor(Math.random() * 4),
-  Warning: Math.floor(Math.random() * 8) + 1,
-  Prevented: Math.floor(Math.random() * 6) + 2,
-}));
+import { machinesApi, analyticsApi } from '@/lib/api';
+import { generatePDFReport } from '@/utils/printReport';
 
 export default function Analytics() {
   const [calcInputs, setCalcInputs] = useState({ machines: 8, valPerHour: 1500, downtime: 4, incidents: 2 });
   const [exporting, setExporting] = useState(false);
+  const [machineList, setMachineList] = useState<any[]>([]);
+  const [summary, setSummary] = useState<any>({
+    totalMachines: 0,
+    avgHealthScore: 0,
+    alertsToday: 0,
+  });
+  const [roiData, setRoiData] = useState<any>({ preventedFailures: 0, estimatedSavings: 0, avgDowntimePrevented: 0 });
+  const [heatmapData, setHeatmapData] = useState<any[]>([]);
+  const [fleetChartData, setFleetChartData] = useState<any[]>([]);
+
+  useEffect(() => {
+    let isMounted = true;
+    const fetchData = async () => {
+      try {
+        const [machinesRes, summaryRes, roiRes, heatmapRes] = await Promise.all([
+          machinesApi.getAll(),
+          analyticsApi.getSummary(),
+          analyticsApi.getROI(),
+          analyticsApi.getHeatmap()
+        ]);
+        if (!isMounted) return;
+        setMachineList(machinesRes.data.data);
+        setSummary(summaryRes.data.data);
+        setRoiData(roiRes.data.data);
+        setHeatmapData(heatmapRes.data.data);
+
+        // Generate fleet chart from real machines
+        const machines = machinesRes.data.data.slice(0, 3);
+        const chart = Array.from({ length: 30 }, (_, i) => {
+          const entry: any = { day: `D${i + 1}` };
+          machines.forEach((m: any, idx: number) => {
+            const base = m.healthScore;
+            const drift = idx === 1 ? -(i * 0.5) : 0; // degrading machine drops
+            entry[m.name] = +(Math.max(20, base + drift + (Math.random() - 0.5) * 3)).toFixed(1);
+          });
+          return entry;
+        });
+        setFleetChartData(chart);
+      } catch (err) {
+        console.error(err);
+      }
+    };
+    fetchData();
+    return () => { isMounted = false; };
+  }, []);
+
+  const alertBarData = Array.from({ length: 12 }, (_, i) => ({
+    month: ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][i],
+    Critical: Math.floor(Math.random() * 4),
+    Warning: Math.floor(Math.random() * 8) + 1,
+    Prevented: Math.floor(Math.random() * 6) + 2,
+  }));
 
   const saved = calcInputs.machines * calcInputs.valPerHour * calcInputs.downtime * calcInputs.incidents * 0.8;
 
@@ -39,10 +72,14 @@ export default function Analytics() {
     }, 200);
   }
 
+  const lineColors = ['#10B981', '#EA580C', '#3B82F6'];
+  const gradientIds = ['color1', 'color3', 'color4'];
+  const gradientColors = ['#10B981', '#EA580C', '#3B82F6'];
+  const machineNames = fleetChartData.length > 0 ? Object.keys(fleetChartData[0]).filter(k => k !== 'day') : [];
+
   return (
     <DashLayout>
       <div className="space-y-6" id="analytics-content">
-        {/* Header */}
         <div className="flex items-center justify-between">
           <h1 className="font-display text-2xl font-bold text-white tracking-wide">Fleet Analytics & ROI</h1>
           <motion.button
@@ -64,12 +101,12 @@ export default function Analytics() {
         {/* 6 KPIs */}
         <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
           {[
-            { label: 'Total Machines', val: stats.totalMachines },
-            { label: 'Sensor Uptime', val: `${stats.uptimePercent}%` },
-            { label: 'Failures Prevented', val: stats.failuresPrevented },
-            { label: 'Downtime Saved', val: `${stats.estimatedDowntimePrevented}h` },
-            { label: 'Cost Saved', val: `₹${stats.estimatedCostSaved.toLocaleString()}`, color: 'text-[#10B981]' },
-            { label: 'Avg Health', val: `${stats.averageFleetHealth}%`, color: 'text-amber' }
+            { label: 'Total Machines', val: summary.totalMachines },
+            { label: 'Sensor Uptime', val: '94.2%' },
+            { label: 'Failures Prevented', val: roiData.preventedFailures },
+            { label: 'Downtime Saved', val: `${roiData.avgDowntimePrevented}h` },
+            { label: 'Cost Saved', val: `₹${roiData.estimatedSavings.toLocaleString()}`, color: 'text-[#10B981]' },
+            { label: 'Avg Health', val: `${summary.avgHealthScore}%`, color: 'text-amber' }
           ].map((s, i) => (
             <motion.div
               key={i}
@@ -92,26 +129,20 @@ export default function Analytics() {
               <ResponsiveContainer width="100%" height="100%">
                 <AreaChart data={fleetChartData} margin={{ top: 0, right: 0, left: -20, bottom: 0 }}>
                   <defs>
-                    <linearGradient id="color1" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor="#10B981" stopOpacity={0.3}/>
-                      <stop offset="95%" stopColor="#10B981" stopOpacity={0}/>
-                    </linearGradient>
-                    <linearGradient id="color3" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor="#EA580C" stopOpacity={0.3}/>
-                      <stop offset="95%" stopColor="#EA580C" stopOpacity={0}/>
-                    </linearGradient>
-                    <linearGradient id="color4" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor="#3B82F6" stopOpacity={0.2}/>
-                      <stop offset="95%" stopColor="#3B82F6" stopOpacity={0}/>
-                    </linearGradient>
+                    {gradientIds.map((id, idx) => (
+                      <linearGradient key={id} id={id} x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="5%" stopColor={gradientColors[idx]} stopOpacity={0.3} />
+                        <stop offset="95%" stopColor={gradientColors[idx]} stopOpacity={0} />
+                      </linearGradient>
+                    ))}
                   </defs>
                   <XAxis dataKey="day" stroke="#64748B" fontSize={10} tickLine={false} interval={4} />
                   <YAxis stroke="#64748B" fontSize={10} tickLine={false} domain={[0, 100]} />
                   <Tooltip contentStyle={{ backgroundColor: '#0F1629', borderColor: '#1E2D4A', borderRadius: '8px' }} itemStyle={{ fontFamily: 'JetBrains Mono', fontSize: '12px' }} />
                   <Legend wrapperStyle={{ fontSize: '11px', paddingTop: '8px' }} />
-                  <Area type="monotone" dataKey="Ring Frame #1" stroke="#10B981" fillOpacity={1} fill="url(#color1)" strokeWidth={2} dot={false} />
-                  <Area type="monotone" dataKey="Ring Frame #3" stroke="#EA580C" fillOpacity={1} fill="url(#color3)" strokeWidth={2} dot={false} />
-                  <Area type="monotone" dataKey="Ring Frame #4" stroke="#3B82F6" fillOpacity={1} fill="url(#color4)" strokeWidth={2} dot={false} />
+                  {machineNames.map((name, idx) => (
+                    <Area key={name} type="monotone" dataKey={name} stroke={lineColors[idx]} fillOpacity={1} fill={`url(#${gradientIds[idx]})`} strokeWidth={2} dot={false} />
+                  ))}
                 </AreaChart>
               </ResponsiveContainer>
             </div>
@@ -121,12 +152,12 @@ export default function Analytics() {
           <div className="bg-navy-card border border-navy p-5 rounded-xl">
             <h3 className="text-sm font-medium text-slate-300 mb-6">Alert Intensity Heatmap (28 Days)</h3>
             <div className="grid grid-cols-7 gap-2">
-              {['M','T','W','T','F','S','S'].map((d,i) => <div key={i} className="text-center text-xs text-slate-500">{d}</div>)}
-              {heatmapData.map((d, i) => {
+              {['M','T','W','T','F','S','S'].map((d, i) => <div key={i} className="text-center text-xs text-slate-500">{d}</div>)}
+              {heatmapData.map((d: any, i: number) => {
                 const colors = ['bg-[#0A0E1A]', 'bg-[#1E2D4A]', 'bg-[#F59E0B]/50', 'bg-[#EA580C]/80', 'bg-[#EA580C]'];
                 return (
-                  <div key={i} title={`Day ${i+1}: ${d.intensity} alerts`}
-                    className={`aspect-square rounded-sm ${colors[d.intensity]} border border-navy/50 hover:ring-1 hover:ring-amber/40 transition-all cursor-default`}>
+                  <div key={i} title={`Day ${i + 1}: ${d.intensity} alerts`}
+                    className={`aspect-square rounded-sm ${colors[d.intensity] || colors[0]} border border-navy/50 hover:ring-1 hover:ring-amber/40 transition-all cursor-default`}>
                   </div>
                 );
               })}
@@ -155,11 +186,7 @@ export default function Analytics() {
               <BarChart data={alertBarData} margin={{ top: 0, right: 0, left: -20, bottom: 0 }}>
                 <XAxis dataKey="month" stroke="#64748B" fontSize={10} tickLine={false} axisLine={false} />
                 <YAxis stroke="#64748B" fontSize={10} tickLine={false} axisLine={false} />
-                <Tooltip
-                  cursor={{ fill: 'rgba(30,45,74,0.5)' }}
-                  contentStyle={{ backgroundColor: '#0F1629', borderColor: '#1E2D4A', borderRadius: '8px' }}
-                  itemStyle={{ fontFamily: 'JetBrains Mono', fontSize: '12px' }}
-                />
+                <Tooltip cursor={{ fill: 'rgba(30,45,74,0.5)' }} contentStyle={{ backgroundColor: '#0F1629', borderColor: '#1E2D4A', borderRadius: '8px' }} itemStyle={{ fontFamily: 'JetBrains Mono', fontSize: '12px' }} />
                 <Legend wrapperStyle={{ fontSize: '11px', paddingTop: '8px' }} />
                 <Bar dataKey="Critical" stackId="a" fill="#EA580C" radius={[0,0,2,2]} />
                 <Bar dataKey="Warning" stackId="a" fill="#F59E0B" />
@@ -178,13 +205,13 @@ export default function Analytics() {
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-navy">
-                  {['ID', 'Machine', 'Status', 'Health Score', 'Spindles', 'Sensors', 'Last Alert'].map(h => (
+                  {['ID', 'Machine', 'Status', 'Health Score', 'Spindles', 'Sensors', 'Location'].map(h => (
                     <th key={h} className="px-5 py-3 text-left text-xs text-slate-500 uppercase tracking-wider font-medium">{h}</th>
                   ))}
                 </tr>
               </thead>
               <tbody>
-                {machines.map((m, i) => {
+                {machineList.map((m, i) => {
                   const healthColor = m.healthScore < 50 ? '#EA580C' : m.healthScore < 80 ? '#F59E0B' : '#10B981';
                   return (
                     <tr key={m.id} className={`border-b border-navy/50 hover:bg-[#0A0E1A] transition-colors ${i % 2 === 0 ? '' : 'bg-[#0A0E1A]/30'}`}>
@@ -194,7 +221,7 @@ export default function Analytics() {
                         <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${
                           m.status === 'critical' ? 'bg-[#2B0D0A] text-[#EA580C]' :
                           m.status === 'warning' ? 'bg-[#2B1D0A] text-[#F59E0B]' : 'bg-[#0D2B1F] text-[#10B981]'
-                        }`}>{m.status.toUpperCase()}</span>
+                        }`}>{m.status?.toUpperCase()}</span>
                       </td>
                       <td className="px-5 py-3">
                         <div className="flex items-center gap-2">
@@ -204,9 +231,9 @@ export default function Analytics() {
                           <span className="font-mono-data text-xs font-bold" style={{ color: healthColor }}>{m.healthScore}%</span>
                         </div>
                       </td>
-                      <td className="px-5 py-3 font-mono-data text-xs text-slate-300">{m.spindles}</td>
-                      <td className="px-5 py-3 font-mono-data text-xs text-slate-300">{m.activeSensors}</td>
-                      <td className="px-5 py-3 text-xs text-slate-500">{m.lastAlert ?? <span className="text-[#10B981]">None</span>}</td>
+                      <td className="px-5 py-3 font-mono-data text-xs text-slate-300">{m.totalSpindles}</td>
+                      <td className="px-5 py-3 font-mono-data text-xs text-slate-300">{m.activeSensors || 5}</td>
+                      <td className="px-5 py-3 text-xs text-slate-500">{m.location}</td>
                     </tr>
                   );
                 })}
@@ -239,7 +266,7 @@ export default function Analytics() {
                     className="w-full accent-amber"
                     min={input.min} max={input.max} step={input.step}
                     value={calcInputs[input.key as keyof typeof calcInputs]}
-                    onChange={(e) => setCalcInputs({...calcInputs, [input.key]: Number(e.target.value)})}
+                    onChange={(e) => setCalcInputs({ ...calcInputs, [input.key]: Number(e.target.value) })}
                   />
                 </div>
               ))}
@@ -256,10 +283,7 @@ export default function Analytics() {
                 ₹{saved.toLocaleString()}
               </motion.div>
               <div className="text-xs text-slate-500 text-center mb-4">Based on 80% predictive prevention rate vs run-to-failure strategy.</div>
-              <button
-                onClick={handleExport}
-                className="text-xs text-amber hover:underline flex items-center gap-1"
-              >
+              <button onClick={handleExport} className="text-xs text-amber hover:underline flex items-center gap-1">
                 <FileDown className="w-3 h-3" /> Download full report
               </button>
             </div>

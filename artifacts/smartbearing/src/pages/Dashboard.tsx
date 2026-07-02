@@ -1,10 +1,12 @@
+import { useState, useEffect } from 'react';
 import { useLocation } from 'wouter';
 import { Link } from 'wouter';
 import DashLayout from '@/components/layout/DashLayout';
-import { stats, machines, alerts, timeSeriesData } from '@/data/mockData';
 import { StatusBadge } from '@/components/ui/StatusBadge';
 import { useCountUp } from '@/hooks/useCountUp';
 import { useLiveSensors } from '@/hooks/useLiveSensors';
+import { machinesApi, analyticsApi, alertsApi } from '@/lib/api';
+import { getSocket } from '@/lib/socket';
 import { LineChart, Line, XAxis, YAxis, Tooltip, Legend, ResponsiveContainer, ReferenceLine } from 'recharts';
 import { Activity, Clock, Cpu, TrendingUp, TrendingDown, Minus } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -12,18 +14,88 @@ import WhatsAppAlert from '@/components/dashboard/WhatsAppAlert';
 
 export default function Dashboard() {
   const [, setLocation] = useLocation();
-  const fleetHealth = useCountUp(stats.averageFleetHealth, 1500);
-  const dtSaved = useCountUp(stats.estimatedDowntimePrevented, 1500);
-  const liveSensors = useLiveSensors(3500);
+  
+  const [machines, setMachines] = useState<any[]>([]);
+  const [alerts, setAlerts] = useState<any[]>([]);
+  const [summary, setSummary] = useState<any>({
+    avgHealthScore: 0,
+    estimatedSavings: 0,
+    totalMachines: 0,
+    alertsToday: 0
+  });
+  
+  const fleetHealth = useCountUp(summary.avgHealthScore, 1500);
+  const dtSaved = useCountUp(summary.estimatedSavings ? 18 : 0, 1500);
+  const liveSensors = useLiveSensors();
+  
+  const [chartData, setChartData] = useState<any[]>([]);
 
-  const chartData = timeSeriesData.M001.vibration.map((d, i) => ({
-    time: d.time,
-    M001: +d.value.toFixed(2),
-    M002: +timeSeriesData.M002.vibration[i].value.toFixed(2),
-    M003: +timeSeriesData.M003.vibration[i].value.toFixed(2),
-  }));
+  useEffect(() => {
+    let isMounted = true;
+    const fetchData = async () => {
+      try {
+        const [machinesRes, summaryRes, alertsRes, roiRes] = await Promise.all([
+          machinesApi.getAll(),
+          analyticsApi.getSummary(),
+          alertsApi.getAll({ status: 'active' }),
+          analyticsApi.getROI()
+        ]);
+        
+        if (!isMounted) return;
+        
+        setMachines(machinesRes.data.data);
+        setAlerts(alertsRes.data.data);
+        setSummary({
+          ...summaryRes.data.data,
+          estimatedSavings: roiRes.data.data.estimatedSavings
+        });
+        
+        const top3 = machinesRes.data.data.slice(0, 3);
+        if (top3.length >= 3) {
+           const [h1, h2, h3] = await Promise.all([
+             machinesApi.getHistory(top3[0].id, 24),
+             machinesApi.getHistory(top3[1].id, 24),
+             machinesApi.getHistory(top3[2].id, 24)
+           ]);
+           
+           const d1 = h1.data.data.vibration;
+           const d2 = h2.data.data.vibration;
+           const d3 = h3.data.data.vibration;
+           
+           const combined = d1.map((d: any, i: number) => ({
+             time: d.time,
+             [top3[0].id]: +(d.value).toFixed(2),
+             [top3[1].id]: +(d2[i]?.value || 0).toFixed(2),
+             [top3[2].id]: +(d3[i]?.value || 0).toFixed(2)
+           }));
+           if (isMounted) setChartData(combined);
+        }
+      } catch (err) {
+        console.error(err);
+      }
+    };
+    fetchData();
+    
+    const socket = getSocket();
+    
+    const onFleetSummary = (data: any) => {
+       setSummary((prev: any) => ({ ...prev, ...data }));
+    };
+    
+    const onAlertNew = (alert: any) => {
+       setAlerts(prev => [alert, ...prev]);
+    };
+    
+    socket.on('fleet:summary', onFleetSummary);
+    socket.on('alert:new', onAlertNew);
+    
+    return () => {
+      isMounted = false;
+      socket.off('fleet:summary', onFleetSummary);
+      socket.off('alert:new', onAlertNew);
+    };
+  }, []);
 
-  const criticalSensors = liveSensors.filter(s => s.status === 'critical' || s.status === 'warning').slice(0, 4);
   const allSensors = liveSensors.slice(0, 6);
 
   return (
@@ -46,8 +118,12 @@ export default function Dashboard() {
           <motion.div initial={{opacity:0, y:20}} animate={{opacity:1, y:0}} transition={{delay:0.1}} className="bg-navy-card border border-navy p-5 rounded-xl flex flex-col justify-between">
             <span className="text-slate-400 text-sm font-medium">Active Alerts</span>
             <div className="mt-4 flex gap-2">
-              <span className="bg-[#2B0D0A] text-[#EA580C] border border-[#EA580C]/30 px-3 py-1 rounded-md text-lg font-bold font-mono-data">2 Crit</span>
-              <span className="bg-[#2B1D0A] text-[#F59E0B] border border-[#F59E0B]/30 px-3 py-1 rounded-md text-lg font-bold font-mono-data">1 Warn</span>
+              <span className="bg-[#2B0D0A] text-[#EA580C] border border-[#EA580C]/30 px-3 py-1 rounded-md text-lg font-bold font-mono-data">
+                {alerts.filter(a => a.type === 'CRITICAL').length} Crit
+              </span>
+              <span className="bg-[#2B1D0A] text-[#F59E0B] border border-[#F59E0B]/30 px-3 py-1 rounded-md text-lg font-bold font-mono-data">
+                {alerts.filter(a => a.type === 'WARNING').length} Warn
+              </span>
             </div>
             <span className="text-xs text-slate-500 mt-4">Last 24 hours</span>
           </motion.div>
@@ -58,14 +134,16 @@ export default function Dashboard() {
               <span className="font-mono-data text-4xl font-bold text-[#10B981]">{dtSaved}</span>
               <span className="text-slate-400 ml-2">hrs</span>
             </div>
-            <span className="text-xs text-[#10B981] mt-4 font-mono-data">Est. ₹54,000 saved</span>
+            <span className="text-xs text-[#10B981] mt-4 font-mono-data">
+              Est. ₹{summary.estimatedSavings.toLocaleString()} saved
+            </span>
           </motion.div>
 
           <motion.div initial={{opacity:0, y:20}} animate={{opacity:1, y:0}} transition={{delay:0.3}} className="bg-navy-card border border-navy p-5 rounded-xl flex flex-col justify-between">
             <span className="text-slate-400 text-sm font-medium">Sensor Network</span>
             <div className="mt-4">
-              <span className="font-mono-data text-4xl font-bold text-white">21</span>
-              <span className="text-slate-400 ml-2">/ 21 active</span>
+              <span className="font-mono-data text-4xl font-bold text-white">{summary.totalMachines * 5}</span>
+              <span className="text-slate-400 ml-2">nodes active</span>
             </div>
             <div className="flex items-center gap-2 mt-4 text-xs text-slate-400">
               <span className="w-2 h-2 rounded-full dot-healthy"></span> 100% Uptime
@@ -79,17 +157,17 @@ export default function Dashboard() {
             <div className="flex items-center gap-2">
               <span className="w-2 h-2 rounded-full bg-[#10B981] animate-pulse"></span>
               <h3 className="text-sm font-semibold text-white">Live Sensor Feed</h3>
-              <span className="text-[10px] text-slate-500 font-mono-data">Updates every 3.5s</span>
+              <span className="text-[10px] text-slate-500 font-mono-data">Live via Socket.io</span>
             </div>
             <Link href="/machine/M003" className="text-xs text-amber hover:underline">View all →</Link>
           </div>
-          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 divide-x divide-navy">
+          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 divide-x divide-navy min-h-[100px]">
             {allSensors.map(s => {
               const vColor = s.vibrationRMS > 3 ? '#EA580C' : s.vibrationRMS > 1.5 ? '#F59E0B' : '#10B981';
               const DeltaIcon = s.vibDelta > 0.02 ? TrendingUp : s.vibDelta < -0.02 ? TrendingDown : Minus;
               const deltaColor = s.vibDelta > 0.02 ? '#EA580C' : s.vibDelta < -0.02 ? '#10B981' : '#64748b';
               return (
-                <div key={s.id} className="p-3 flex flex-col gap-1 min-w-0">
+                <div key={`${s.machineId}-${s.id}`} className="p-3 flex flex-col gap-1 min-w-0">
                   <div className="text-[10px] text-slate-500 font-mono-data truncate">{s.id}</div>
                   <div className="text-[10px] text-slate-400 truncate">{s.machineId}</div>
                   <div className="flex items-center gap-1 mt-1">
@@ -129,7 +207,7 @@ export default function Dashboard() {
               <div className="flex justify-between items-start mb-4">
                 <div>
                   <h3 className="text-white font-bold text-lg">{m.name}</h3>
-                  <p className="text-xs text-slate-400 font-mono-data mt-1">{m.id} | {m.spindles} Spindles</p>
+                  <p className="text-xs text-slate-400 font-mono-data mt-1">{m.id} | {m.totalSpindles || 400} Spindles</p>
                 </div>
                 <StatusBadge status={m.status} />
               </div>
@@ -143,7 +221,7 @@ export default function Dashboard() {
                 </div>
                 <div className="text-right">
                   <div className="flex items-center justify-end gap-1 text-slate-300 font-mono-data text-sm">
-                    <Cpu className="w-3 h-3" /> {m.activeSensors}
+                    <Cpu className="w-3 h-3" /> {m.activeSensors || 5}
                   </div>
                   <div className="text-xs text-slate-500 mt-1">Nodes Active</div>
                 </div>
@@ -178,9 +256,9 @@ export default function Dashboard() {
                   <Legend wrapperStyle={{ fontSize: '12px', paddingTop: '10px' }} />
                   <ReferenceLine y={1.5} stroke="#F59E0B" strokeDasharray="3 3" label={{ value: 'Warning', fill: '#F59E0B', fontSize: 10, position: 'insideTopLeft' }} />
                   <ReferenceLine y={3.0} stroke="#EA580C" strokeDasharray="3 3" label={{ value: 'Critical', fill: '#EA580C', fontSize: 10, position: 'insideTopLeft' }} />
-                  <Line type="monotone" dataKey="M001" name="Ring Frame #1" stroke="#10B981" strokeWidth={2} dot={false} />
-                  <Line type="monotone" dataKey="M002" name="Ring Frame #2" stroke="#F59E0B" strokeWidth={2} dot={false} />
-                  <Line type="monotone" dataKey="M003" name="Ring Frame #3" stroke="#EA580C" strokeWidth={3} dot={false} />
+                  {machines.slice(0, 3).map((m, i) => (
+                     <Line key={m.id} type="monotone" dataKey={m.id} name={m.name} stroke={['#10B981', '#F59E0B', '#EA580C'][i]} strokeWidth={i === 2 ? 3 : 2} dot={false} />
+                  ))}
                 </LineChart>
               </ResponsiveContainer>
             </div>
@@ -195,8 +273,8 @@ export default function Dashboard() {
               {alerts.slice(0,4).map(alert => (
                 <div key={alert.id} className="p-3 bg-[#0A0E1A] rounded-lg border-l-4" style={{ borderColor: alert.type === 'CRITICAL' ? '#EA580C' : alert.type === 'WARNING' ? '#F59E0B' : '#3B82F6' }}>
                   <div className="flex justify-between items-start mb-1">
-                    <span className="text-xs font-bold text-white">{alert.machineName}</span>
-                    <span className="text-[10px] text-slate-500 font-mono-data">{alert.timestamp.split(' ')[1]}</span>
+                    <span className="text-xs font-bold text-white">{alert.machineName || alert.machineId}</span>
+                    <span className="text-[10px] text-slate-500 font-mono-data">{alert.timestamp.split(' ')[1] || alert.timestamp}</span>
                   </div>
                   <p className="text-xs text-slate-400 line-clamp-2 leading-relaxed">{alert.message}</p>
                 </div>
