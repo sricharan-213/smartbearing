@@ -81,9 +81,8 @@ Open **http://localhost:5173** in your browser. Enter *any* email and password t
 ---
 
 ## 👥 The Team
-- **Physical Hardware:** Varun & Sreeram
 - **AI / ML Model & CAD:** Prateek
-- **Backend API & Alerts:** Sreeram
+- **Backend API & Alerts:**  Varun Sreeram
 - **Frontend Dashboard:** Vaishnav
 - **Git & Repo Management:** Charan
 
