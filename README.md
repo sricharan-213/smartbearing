@@ -163,7 +163,11 @@ Open **http://localhost:5173** in your browser. Enter *any* email and password t
 
 ## 🛠️ Hardware Prototype
 
-▶️ **[Click here to watch the 3D CAD Prototype Video in action!](https://github.com/sricharan-213/smartbearing/raw/main/onshapevid.mp4)**
+**[▶️ Watch the 3D CAD Prototype Video in action!](https://github.com/sricharan-213/smartbearing/raw/main/onshapevid.mp4)**
+
+Alternatively, you can explore the hardware directly:
+- **[View Interactive 3D Model in Onshape](https://cad.onshape.com/documents/3a69519e53a5005e3bec8510/w/b2ba871f5405233222816e48/e/a31d598d5d85e1f838b6b86d?renderMode=0&uiState=6a442c37a925ba1565306983)**
+- **[Download Raw CAD File (Parasolid .x_t)](Part%20Studio%201%20(1).x_t)**
 
 ---
 
