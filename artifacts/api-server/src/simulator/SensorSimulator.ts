@@ -62,8 +62,40 @@ class SensorSimulator {
           
           const vibrationRMS = +(baseVibration + (Math.random() - 0.5) * 0.2).toFixed(3);
           const temperature = +(baseTemp + (Math.random() - 0.5) * 2).toFixed(1);
-          const anomalyFlag = healthScore < 40;
-          const bpfoScore = +(anomalyFlag ? 0.8 + Math.random() * 0.2 : 0.1 + Math.random() * 0.2).toFixed(3);
+          
+          // Generate 2048-point raw vibration signal to feed into ML model
+          const signal = new Array(2048).fill(0);
+          for (let s = 0; s < 2048; s++) {
+            signal[s] = Math.sin(s * 0.1) * vibrationRMS + (Math.random() - 0.5) * 0.1;
+            if (machine.status === 'critical') {
+               if (s % 100 < 5) signal[s] += 4.0 * (Math.random() + 0.5); 
+            } else if (machine.status === 'warning') {
+               if (s % 100 < 5) signal[s] += 1.5 * (Math.random() + 0.5); 
+            }
+          }
+
+          let mlLabel = "Healthy";
+          let mlConfidence = 0.99;
+          try {
+             const res = await fetch("http://127.0.0.1:8000/predict", {
+                 method: "POST",
+                 headers: { "Content-Type": "application/json" },
+                 body: JSON.stringify({ signal })
+             });
+             if (res.ok) {
+                 const mlData = await res.json();
+                 if (mlData.label) {
+                     mlLabel = mlData.label;
+                     mlConfidence = mlData.confidence;
+                 }
+             }
+          } catch (e) {
+             // Silently fallback if ML server is not running
+          }
+
+          const anomalyFlag = mlLabel !== "Healthy";
+          const finalHealthScore = anomalyFlag ? Math.max(10, 100 - (mlConfidence * 100)) : Math.min(100, mlConfidence * 100);
+          const bpfoScore = +(anomalyFlag ? mlConfidence : 0.1 + Math.random() * 0.2).toFixed(3);
           
           const vibrationFFT = [];
           for (let f = 0; f < 128; f++) {
@@ -85,14 +117,14 @@ class SensorSimulator {
             temperature,
             voltageNormalized: +(220 + (Math.random() - 0.5) * 5).toFixed(1),
             bpfoScore,
-            healthScore: Math.round(healthScore),
+            healthScore: Math.round(finalHealthScore),
             anomalyFlag
           });
           
           await reading.save();
           
-          if (healthScore < 70) {
-            const severity = healthScore < 40 ? 'critical' : 'warning';
+          if (finalHealthScore < 70) {
+            const severity = finalHealthScore < 40 ? 'critical' : 'warning';
             const existingAlert = await Alert.findOne({ machineId: machine.machineId, spindleId, status: 'active' });
             
             if (!existingAlert || existingAlert.severity !== severity) {
@@ -107,7 +139,7 @@ class SensorSimulator {
                  spindleId,
                  severity,
                  type: severity.toUpperCase(),
-                 message: severity === 'critical' ? 'BPFO frequency spike detected. Bearing failure imminent.' : 'Vibration RMS elevated. Monitor closely.'
+                 message: anomalyFlag ? `${mlLabel} detected with ${(mlConfidence*100).toFixed(1)}% confidence.` : 'Vibration RMS elevated. Monitor closely.'
                });
                await newAlert.save();
                
@@ -133,7 +165,7 @@ class SensorSimulator {
             io.to(`machine:${machine.machineId}`).emit('sensor:update', {
               machineId: machine.machineId,
               spindleId,
-              healthScore: Math.round(healthScore),
+              healthScore: Math.round(finalHealthScore),
               vibrationRMS,
               temperature,
               bpfoScore,
